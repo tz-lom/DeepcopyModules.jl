@@ -102,7 +102,7 @@ function setparent!(m::Module, p::Module)
     m
 end
 # NOTE: This struct must be kept up-to-date with Julia's `_jl_module_t`!
-struct _Module2
+mutable struct _Module2
     name::Symbol
     parent::Module
 end

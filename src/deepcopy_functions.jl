@@ -1,30 +1,45 @@
-using AbstractTrees
-
 # Replace module in Expr tree
 function expr_replace_module(expr, pat::Pair{Module, Module})
-    expr_replace_module!(deepcopy(expr), pat)
+    error("Unknown expression type $(typeof(expr)) $expr")
 end
-function expr_replace_module!(expr, pat::Pair{Module, Module})
-    treemap!(PreOrderDFS(expr)) do node
-        if node isa GlobalRef && node.mod == pat.first
-            GlobalRef(pat.second, node.name)
-        else
-            node
-        end
+
+function expr_replace_module(expr::Number, pat::Pair{Module, Module})
+    expr
+end
+
+function expr_replace_module(expr::Symbol, pat::Pair{Module, Module})
+    expr
+end
+
+function expr_replace_module(expr::Core.SSAValue, pat::Pair{Module, Module})
+    expr
+end
+
+function expr_replace_module(expr::Core.ReturnNode, pat::Pair{Module, Module})
+    Core.ReturnNode(expr_replace_module(expr.val, pat))
+end
+
+function expr_replace_module(node::GlobalRef, pat::Pair{Module, Module})
+    if node.mod == pat.first
+        GlobalRef(pat.second, node.name)
+    else
+        GlobalRef(node.mod, node.name)
     end
 end
 
+function expr_replace_module(expr::Expr, pat::Pair{Module, Module})
+    Expr(expr.head, map(expr.args) do arg
+        expr_replace_module(arg, pat)
+    end...)
+end
 
 # Replace Module in CodeInfo
 function code_replace_module(code::Core.CodeInfo, pat::Pair{Module, Module})
     code2 = copy(code)  # I guess this is sufficient...
-    code_replace_module!(code2, pat)
-end
-function code_replace_module!(code::Core.CodeInfo, pat::Pair{Module, Module})
-    for e in code.code
-        expr_replace_module!(e, pat)
+    code2.code = map(code.code) do e
+        expr_replace_module(e, pat)
     end
-    code
+    code2
 end
 
 # Deepcopy Function
@@ -50,10 +65,12 @@ _func_sig_typeparams(t) = t isa UnionAll ? (t.var, _func_sig_typeparams(t.body).
 function deepcopy_method(destmodule, m, func::Function)
     # TODO: is it okay to use m.sig.parameters
     argdata = Core.svec(Core.svec(typeof(func), _func_sig_params(m.sig)...),
-                        Core.svec(_func_sig_typeparams(m.sig)...))
+                        Core.svec(_func_sig_typeparams(m.sig)...),
+                        LineNumberNode(Int(m.line), m.file)
+                        )
 
     ci = Base.uncompressed_ast(m)
-    ci = code_replace_module!(ci, m.module => destmodule)
+    ci = code_replace_module(ci, m.module => destmodule)
 
-    ccall(:jl_method_def, Cvoid, (Core.SimpleVector, Any, Ptr{Module}), argdata, ci, pointer_from_objref(destmodule))
+    ccall(:jl_method_def, Cvoid, (Core.SimpleVector, Ptr{Core.MethodTable}, Any, Ptr{Module}), argdata,   Ptr{Cvoid}()    , ci, pointer_from_objref(destmodule))
 end
